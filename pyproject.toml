@@ -4,17 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "endstone-breeze"
-version = "0.1.9"
+version = "0.1.0"
 description = "chat manager with extension support"
 authors = [
-    { name = "Niko"},
-    { name = "Sasha"},
-    { name = "Bob Example"}
+    { name = "niko-at-chalupa"},
+    { name = "Sasha"}
 ]
 dependencies = [
     "alt-profanity-check",
-    "discord-webhook",
-    "detoxify",
     "numpy"
 ]
 

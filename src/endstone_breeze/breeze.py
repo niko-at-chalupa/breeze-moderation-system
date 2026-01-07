@@ -1,13 +1,12 @@
-from endstone import ColorFormat
+from endstone import ColorFormat, scheduler
 from endstone.event import event_handler, PlayerJoinEvent, PlayerChatEvent, PlayerQuitEvent, EventPriority
 from endstone.plugin import Plugin
+import endstone
 
 from .utils.profanity_utils import ProfanityCheck, ProfanityLonglist, ProfanityExtralist
-# pc, pl, pe are okay as common abbreviations in this context
 pc = ProfanityCheck()
 pl = ProfanityLonglist()
 pe = ProfanityExtralist()
-from .utils.detox_utils import detoxify_text, round_and_dict_to_list, is_toxic_text
 from .utils.general_utils import to_hash_mask, split_into_tokens
 
 from enum import Enum
@@ -15,6 +14,7 @@ from random import randint
 import os, time, asyncio, inspect, importlib.util, sys, threading
 from collections import defaultdict
 from pathlib import Path
+from typing import TypedDict, cast
 
 def is_kherimoya_environment() -> bool: # simply checks if the four folders Kherimoya makes upon creating a server are present. The reason why we check for JUST the folders, is so that people can make Kherimoya-like environments by just making the folders themselves.
     kherimoya_paths = ['../state','../server','../extra','../config']
@@ -23,21 +23,27 @@ def is_kherimoya_environment() -> bool: # simply checks if the four folders Kher
             return False
     return True
 
+class PlayerData(TypedDict):
+    latest_time_a_message_was_sent: float
+    last_message: str
+
 class PlayerDataManager:
+    player_data: defaultdict[str, PlayerData]
+
     def __init__(self):
-        self.player_data = defaultdict(lambda: {
-            "latest_time_a_message_was_sent": time.monotonic() - 10,  # Allow immediate first message
+        self.player_data = defaultdict(lambda: cast(PlayerData, {
+            "latest_time_a_message_was_sent": time.monotonic() - 10,
             "last_message": ""
-        })
+        }))
     
-    def update_player_data(self, name, message):
+    def update_player_data(self, name, message) -> None:
         self.player_data[name]["latest_time_a_message_was_sent"] = time.monotonic()
         self.player_data[name]["last_message"] = message
 
-    def get_player_data(self, name):
+    def get_player_data(self, name) -> PlayerData:
         return self.player_data[name]
 
-    def remove_player_data(self, name):
+    def remove_player_data(self, name) -> None:
         if name in self.player_data:
             del self.player_data[name]
 
@@ -45,7 +51,6 @@ class BreezeTextProcessing:
     def check_and_censor(self, text: str, checks: dict | None = None) -> tuple[str, bool, list]:
         finished_message = text
         defaults = {
-            "Detoxify": True,
             "Profanity-check": True,
             "Extralist": True,
             "Longlist": True,
@@ -58,14 +63,6 @@ class BreezeTextProcessing:
 
         caught = []
         is_bad = False
-
-        # detoxify
-        if is_toxic_text(round_and_dict_to_list(detoxify_text(text, 'multilingual'))) and checks["Detoxify"]:
-            is_bad = True
-            caught.append("Detoxify")
-            finished_message = to_hash_mask(text)
-
-            return (finished_message, is_bad, caught)
         
         # profanity check
         if pc.is_profane(text) and checks["Profanity-check"]:
@@ -92,7 +89,7 @@ class BreezeTextProcessing:
 
 class BreezeExtensionAPI(): # For extensions to use to interact with Breeze
     class _EventBus:
-        def __init__(self, logger: Plugin.logger):
+        def __init__(self, logger: endstone.Logger):
             self.listeners = {}
             self.logger = logger
 
@@ -110,17 +107,31 @@ class BreezeExtensionAPI(): # For extensions to use to interact with Breeze
                     self.logger.error(f"Error in event listener for {event_name}: {e}")
                 self.logger.info(f"[BreezeExtensionAPI] Emitted to {str(func)}")
 
-    class HandlerInput:
-        def __init__(self):
-            pass
-    
-    def __init__(self, logger: Plugin.logger, pdm: PlayerDataManager, btp: BreezeTextProcessing): # pdm, btp re-added
+    class HandlerInput(TypedDict):
+        message: str
+        player: endstone.Player
+        chat_format: str
+        recipients: list[endstone.Player]
+
+    class HandlerOutput(TypedDict):
+        """
+        message (str): The processed message to be sent.
+        fully_cancel_message (bool): Wether to fully cancel the message. (i.e. not send anything)
+        finished_message (str): The final message after processing. (e.g. "[tag] <player> i #### you!")
+        original_message (str): The original message before processing. (e.g. "[tag] <player> i hate you!")
+        """
+        is_bad: bool
+        fully_cancel_message: bool
+        finished_message: str
+        original_message: str
+
+    def __init__(self, logger: endstone.Logger, pdm: "PlayerDataManager | None" = None, btp: "BreezeTextProcessing | None" = None):
         self.plugin = None
         self.ready = False
         self.logger = logger
 
-        self.pdm = pdm # added back
-        self.btp = btp # added back
+        self.pdm = pdm
+        self.btp = btp
 
         self._event_bus = self._EventBus(logger)
 
@@ -154,25 +165,30 @@ class BreezeExtensionAPI(): # For extensions to use to interact with Breeze
         self.plugin = plugin_instance
         self.ready = True
 
-
 class BreezeModuleManager():
+    bea: BreezeExtensionAPI
+    pdm: PlayerDataManager
+    btp: BreezeTextProcessing
+
     class HandlerState(Enum):
             NONE = 0
             DEFAULT = 1
             CUSTOM = 2
 
-    def __init__(self, logger: Plugin.logger, use_cwd_for_extra=False):
+    def __init__(self, logger: endstone.Logger, pdm: PlayerDataManager, btp: BreezeTextProcessing, use_cwd_for_extra=False):
         self.is_kherimoya = is_kherimoya_environment()
         self.use_cwd_for_extra = use_cwd_for_extra
         self.is_breeze_installed = False
         self.breeze_installation_path = None
         self.extension_files = []
         self.logger = logger
+        self.pdm = pdm
+        self.btp = btp
         
         self.handler_state = self.HandlerState.NONE
         self.handler = None
 
-    def _default_handler(self, plugin:Plugin, event:PlayerChatEvent):
+    def _default_handler(self, plugin: "Breeze", event:PlayerChatEvent):
         plugin.bea.on_breeze_chat_event(event, plugin)
 
         sender_uuid = str(event.player.unique_id)
@@ -181,7 +197,7 @@ class BreezeModuleManager():
         event.cancel()
 
         local_player_data = plugin.pdm.get_player_data(event.player.name)
-        is_bad = None
+        is_bad = False
         fully_cancel_message = (False, "")
         caught = []
         should_check_message = True
@@ -272,7 +288,7 @@ class BreezeModuleManager():
             self.logger.error("BreezeModuleManager: We're likely not in a Kherimoya-like environment, so extensions and other stuff will not be loaded.")
 
     def _find_extensions(self):
-        if self.is_breeze_installed:
+        if self.is_breeze_installed and self.breeze_installation_path is not None:
             extensions_path = self.breeze_installation_path / "extensions"
             extension_files = [f for f in os.listdir(extensions_path) if Path(f).suffix == ".py"]
 
@@ -285,14 +301,16 @@ class BreezeModuleManager():
                 self.logger.info(f"[BreezeModuleManager] Found a custom handler...")
 
                 spec = importlib.util.spec_from_file_location(module_name, handler_path)
+                if spec is None or spec.loader is None:
+                    self.logger.error("[BreezeModuleManager] Failed to create spec for handler.py")
+                    return
+                    
                 module = importlib.util.module_from_spec(spec)
                 sys.modules[module_name] = module
                 spec.loader.exec_module(module)
 
                 # function inside handler.py should be named "handler" or whatever you expect
                 handler_func = getattr(module, "handler", None)
-
-                extension_files.remove("handler.py")
 
                 if handler_func is None:
                     self.logger.warning("[BreezeModuleManager] Custom handler found but no 'handler' function defined. Falling back to the default handler.")
@@ -311,7 +329,7 @@ class BreezeModuleManager():
             self.extension_files = extension_files
 
     def _load_extension(self, extension_filename: str):
-        if not self.is_breeze_installed:
+        if not self.is_breeze_installed or self.breeze_installation_path is None:
             self.logger.warning("BreezeModuleManager: Cannot load extension because Breeze is not installed.")
             return
     
@@ -329,7 +347,7 @@ class BreezeModuleManager():
                 return
 
             module = importlib.util.module_from_spec(spec)
-            sys.modules[module_name] = module  
+            sys.modules[module_name] = module
             spec.loader.exec_module(module)
             self.logger.info(f"BreezeModuleManager: Loaded extension module: {module_name}")
 
@@ -360,16 +378,20 @@ class BreezeModuleManager():
 
         # Handler
         if self.handler_state == self.HandlerState.NONE:
-            self.logger.warn("[BreezeModuleManager] No handler was loaded! Loading in the default handler instead...")
+            self.logger.warning("[BreezeModuleManager] No handler was loaded! Loading in the default handler instead...")
             self.handler_state = self.HandlerState.DEFAULT
 
         if self.handler_state == self.HandlerState.DEFAULT:
             self.logger.info("[BreezeModuleManager] We're using Breeze's basic, default handler...")
         else:
-            self.logger.info 
-
+            self.logger.info("[BreezeModuleManager] Using custom handler.") 
 
 class Breeze(Plugin): #PLUGIN
+    bea: BreezeExtensionAPI
+    bmm: BreezeModuleManager
+    pdm: PlayerDataManager
+    btp: BreezeTextProcessing
+
     def on_enable(self) -> None:
         self.logger.info("Enabling Breeze")
         self.register_events(self)
@@ -379,7 +401,7 @@ class Breeze(Plugin): #PLUGIN
         # pdm and btp are re-passed to the extension API
         self.logger.info('extensionapiing'); self.bea = BreezeExtensionAPI(self.logger, pdm=self.pdm, btp=self.btp); self.bea.initialize(self)
 
-        self.logger.info('modulemanagering'); self.bmm = BreezeModuleManager(logger=self.logger); self.bmm.start()
+        self.logger.info('modulemanagering'); self.bmm = BreezeModuleManager(logger=self.logger, pdm=self.pdm, btp=self.btp); self.bmm.start()
 
         self.is_kherimoya = is_kherimoya_environment()
 
@@ -416,4 +438,5 @@ class Breeze(Plugin): #PLUGIN
       
     @event_handler(priority=EventPriority(1))
     def on_chat_sent_by_player(self, event: PlayerChatEvent):
-        threading.Thread(target=self.handle, args=(event,)).start()
+        event.cancel()
+        self.handle(event)

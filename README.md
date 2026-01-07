@@ -4,9 +4,6 @@
 # breeze - chat management plugin for Endstone/Kherimoya
 </div>
 
-> [!IMPORTANT]
-> Breeze doesn't work as of now...
-
 > [!NOTE]
 > This is still being worked on!
 

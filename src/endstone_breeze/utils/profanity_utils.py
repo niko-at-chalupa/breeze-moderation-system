@@ -14,6 +14,7 @@ this is a large list of bad words, and is very sensitive. it will catch any word
 this is NOT recommended as a primary way to detect profanity, but is a good extra layer.
 this is very sensitive, and may catch things that are not bad words. if you find another word that should be added to the longlist, tell me!!!
 this list is taken directly from Minecraft's banned words list, and is base64 encoded.
+this is likely the cheapest method
 
 the recommended way to use this is to first check with the profanity-check library, then the extralist (and maybe the longlist)
 """
@@ -208,7 +209,7 @@ class ProfanityCheck(ProfanityFilter):
         normalized_text = "".join(tokens)  # join tokens back into a single string
         return bool(predict([normalized_text])[0])
 
-    def censor(self, text: str, censor_char: str = "#", neighbors: int = 1, window_size: int = 1) -> str:
+    def censor(self, text: str, replacement: str = "#", neighbors: int = 1, window_size: int = 1) -> str:
         """
         Censors profane words using a sliding window.
         Works directly on tokens from split_into_tokens.
@@ -232,7 +233,7 @@ class ProfanityCheck(ProfanityFilter):
 
         # censor words only, keep separators intact
         censored_tokens = [
-            (censor_char * len(tok)) if censored[i] and tok.strip() and not tok.isspace() else tok
+            (replacement * len(tok)) if censored[i] and tok.strip() and not tok.isspace() else tok
             for i, tok in enumerate(raw_tokens)
         ]
 
