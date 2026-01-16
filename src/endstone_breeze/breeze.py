@@ -283,7 +283,6 @@ class BreezeModuleManager():
                 sys.modules[module_name] = module
                 spec.loader.exec_module(module)
 
-                # function inside handler.py should be named "handler" or whatever you expect
                 handler_func = getattr(module, "handler", None)
 
                 if handler_func is None:

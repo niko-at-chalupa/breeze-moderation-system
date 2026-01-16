@@ -21,8 +21,7 @@ the recommended way to use this is to first check with the profanity-check libra
 from profanity_check import predict, predict_prob 
 from .general_utils import split_into_tokens, levenshtein
 import base64
-
-# this works in two ways, using the profanity-check library, and a custom badwords list (which is very small, and includes words that profanity-check misses like "bith" (bitch) and "shlt" (shit)
+from wordfreq import top_n_list
 
 from .words import blacklist
 from .words import whitelist
@@ -33,6 +32,7 @@ _longlist = [
     if w.strip()
 ]
 
+english_words_list = set(top_n_list("en", 10000)) # Yes, this WILL have the curse words too, but this is only for Extralist and you will be layering Extralist on top of other filters
 
 class ProfanityFilter:
     def is_profane(self, text: str) -> bool:
@@ -56,19 +56,22 @@ class ProfanityExtralist(ProfanityFilter):
         tokens = split_into_tokens(text); tokens = [t.lower() for t in tokens] # split into words + separators
 
         for token in tokens:
-            for bad in blacklist:
-                if token in whitelist: # only check if it's not whitelisted
-                    continue
+            token_lower = token.lower()
+            if token_lower in whitelist:
+                continue
+            elif token_lower in english_words_list:
+                continue
 
+            for bad in blacklist:
                 # Rule 1: fuzzy match full word
-                dist = levenshtein(token, bad)
+                dist = levenshtein(token_lower, bad)
                 if dist <= max(1, len(bad) // 1.3):
                     return True
 
                 # Rule 2: substring fuzzy match if lengths are close
-                if abs(len(token) - len(bad)) <= 5:
-                    for j in range(0, len(token) - len(bad) + 1):
-                        chunk = token[j:j+len(bad)]
+                if abs(len(token_lower) - len(bad)) <= 5:
+                    for j in range(0, len(token_lower) - len(bad) + 1):
+                        chunk = token_lower[j:j+len(bad)]
                         dist = levenshtein(chunk, bad)
                         if dist <= max(1, len(bad) // 2):
                             return True
