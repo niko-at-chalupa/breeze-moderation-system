@@ -4,6 +4,7 @@ from endstone.plugin import Plugin
 import endstone
 import importlib.resources as resources
 from importlib.resources import files
+from types import ModuleType
 
 from .utils.profanity_utils import ProfanityCheck, ProfanityLonglist, ProfanityExtralist
 pc = ProfanityCheck()
@@ -82,97 +83,18 @@ class BreezeTextProcessing:
 
         return (finished_message, is_bad, caught)
 
-class BreezeExtensionAPI(): # For extensions to use to interact with Breeze
-    class _EventBus:
-        def __init__(self, logger: endstone.Logger):
-            self.listeners = {}
-            self.logger = logger
-
-        def on(self, event_name, func):
-            self.listeners.setdefault(event_name, []).append(func)
-
-        def _emit(self, event_name, *args, **kwargs):
-            for func in list(self.listeners.get(event_name, [])):
-                try:
-                    if inspect.iscoroutinefunction(func):
-                        asyncio.run(func(*args, **kwargs))
-                    else:
-                        func(*args, **kwargs)
-                except Exception as e:
-                    self.logger.error(f"Error in event listener for {event_name}: {e}")
-                self.logger.info(f"[BreezeExtensionAPI] Emitted to {str(func)}")
-
-    class HandlerInput(TypedDict):
-        message: str
-        player: endstone.Player
-        chat_format: str
-        recipients: list[endstone.Player]
-
-    class HandlerOutput(TypedDict):
-        """
-        message (str): The processed message to be sent.
-        fully_cancel_message (bool): Wether to fully cancel the message. (i.e. not send anything)
-        finished_message (str): The final message after processing. (e.g. "[tag] <player> i #### you!")
-        original_message (str): The original message before processing. (e.g. "[tag] <player> i hate you!")
-        """
-        is_bad: bool
-        fully_cancel_message: bool
-        finished_message: str
-        original_message: str
-
-    def __init__(self, logger: endstone.Logger, pdm: "PlayerDataManager | None" = None, btp: "BreezeTextProcessing | None" = None):
-        self.plugin = None
-        self.ready = False
-        self.logger = logger
-
-        self.pdm = pdm
-        self.btp = btp
-
-        self._event_bus = self._EventBus(logger)
-
-    @property
-    def eventbus(self):
-        return self._event_bus
-
-    def on_breeze_chat_event(self, event:PlayerChatEvent, plugin):
-        """Called when a chat event is processed by Breeze. 
-        
-        Extensions can hook into this to do extra functions but they can NOT modify management."""
-        if not self.ready:
-            return
-
-        self._event_bus._emit("on_breeze_chat_event", event, plugin); self.logger.info("[BreezeExtensionAPI] on_breeze_chat_event")
-
-        return event, plugin
-
-    def on_breeze_chat_processed(self, event:PlayerChatEvent, handler_output: "BreezeExtensionAPI.HandlerOutput", is_bad:bool, plugin:Plugin):
-        """Called after Breeze has processed a chat event. Breeze is a dictionary of values from Breeze's message evaluation and stuff. 
-        
-        Extensions can hook into this to do extra functions but they can NOT modify management."""
-        if not self.ready:
-            return
-
-        self._event_bus._emit("on_breeze_chat_processed", event, handler_output, is_bad, plugin); self.logger.info("[BreezeExtensionAPI] on_breeze_chat_processed")
-
-        return event, handler_output, is_bad, plugin
-    
-    def initialize(self, plugin_instance: Plugin):
-        self.plugin = plugin_instance
-        self.ready = True
-
 class BreezeModuleManager():
     """internal infrasturcture for managing Breeze modules like extensions and handlers"""
-    bea: BreezeExtensionAPI
     pdm: PlayerDataManager
     btp: BreezeTextProcessing
+    extension_files: list[str]
 
     class HandlerState(Enum):
             NONE = 0
             DEFAULT = 1
             CUSTOM = 2
 
-    def __init__(self, logger: endstone.Logger, pdm: PlayerDataManager, btp: BreezeTextProcessing, use_cwd_for_extra=False):
-        self.use_cwd_for_extra = use_cwd_for_extra
+    def __init__(self, logger: endstone.Logger, pdm: PlayerDataManager, btp: BreezeTextProcessing):
         self.is_breeze_installed = False
         self.breeze_installation_path = None
         self.extension_files = []
@@ -183,7 +105,7 @@ class BreezeModuleManager():
         self.handler_state = self.HandlerState.NONE
         self.handler = None
 
-    def _default_handler(self, handler_input: BreezeExtensionAPI.HandlerInput, player_data_manager: PlayerDataManager, breeze_text_processing: BreezeTextProcessing) -> BreezeExtensionAPI.HandlerOutput:
+    def _default_handler(self, handler_input: "BreezeExtensionAPI.HandlerInput", player_data_manager: PlayerDataManager, breeze_text_processing: BreezeTextProcessing) -> "BreezeExtensionAPI.HandlerOutput":
         sender_uuid = str(handler_input["player"].unique_id)
         finished_message = handler_input["message"]
 
@@ -297,10 +219,10 @@ class BreezeModuleManager():
                 self.handler_state = self.HandlerState.DEFAULT
 
             self.logger.info(f"[BreezeModuleManager] Found {len(extension_files)} extensions in {extensions_path}: {extension_files}")
-            # later on, we can load these extensions dynamically
             self.extension_files = extension_files
 
-    def _load_extension(self, extension_filename: str):
+    def _load_extension(self, extension_filename: str, bea: "BreezeExtensionAPI"):
+        """load extension manually, must be simple str of filename and must be in extensions/ directory"""
         if not self.is_breeze_installed or self.breeze_installation_path is None:
             self.logger.warning("BreezeModuleManager: Cannot load extension because Breeze is not installed.")
             return
@@ -313,7 +235,9 @@ class BreezeModuleManager():
         module_name = extension_filename.removesuffix(".py")
 
         try:
+            module_name = f"breeze.extensions.{extension_filename.removesuffix('.py')}"
             spec = importlib.util.spec_from_file_location(module_name, str(ext_path))
+
             if spec is None or spec.loader is None:
                 self.logger.error(f"BreezeModuleManager: Failed to create spec for {module_name}")
                 return
@@ -326,7 +250,7 @@ class BreezeModuleManager():
             if hasattr(module, "on_load"):
                 try:
                     # pdm and btp re-passed for extensions if they use BreezeExtensionAPI
-                    module.on_load(BreezeExtensionAPI(self.logger, self.pdm, self.btp)) 
+                    module.on_load(bea) 
                     self.logger.info(f"BreezeModuleManager: Extension {module_name} initialized via on_load()")
                 except Exception as e:
                     self.logger.error(f"BreezeModuleManager: Error in on_load() of {module_name}: {e}")
@@ -342,9 +266,6 @@ class BreezeModuleManager():
         # Extensions
         if self.is_breeze_installed:
             self._find_extensions()
-            for extension_file in self.extension_files:
-                self.logger.info(f"[BreezeModuleManager] Loading extension: {extension_file}")
-                self._load_extension(extension_file)
         else:
             self.logger.error("[BreezeModuleManager] Features like extensions will NOT be loaded because Breeze is not installed.")
 
@@ -357,6 +278,89 @@ class BreezeModuleManager():
             pass
         else:
             self.logger.info("[BreezeModuleManager] Using custom handler.") 
+
+class BreezeExtensionAPI():
+    """For extensions to interact with Breeze, and for Breeze to interact with extensions"""
+
+    class _EventBus:
+        def __init__(self, logger: endstone.Logger):
+            self.listeners = {}
+            self.logger = logger
+
+        def on(self, event_name, func):
+            self.listeners.setdefault(event_name, []).append(func)
+            self.logger.debug(f"[BreezeExtensionAPI] new listener {func.__name__}")
+
+        def _emit(self, event_name, *args, **kwargs):
+            for func in list(self.listeners.get(event_name, [])):
+                try:
+                    if inspect.iscoroutinefunction(func):
+                        asyncio.run(func(*args, **kwargs))
+                    else:
+                        func(*args, **kwargs)
+                except Exception as e:
+                    self.logger.error(f"Error in event listener for {event_name}: {e}")
+                self.logger.info(f"[BreezeExtensionAPI] Emitted to {str(func)}")
+
+    class HandlerInput(TypedDict):
+        message: str
+        player: endstone.Player
+        chat_format: str
+        recipients: list[endstone.Player]
+
+    class HandlerOutput(TypedDict):
+        """
+        message (str): The processed message to be sent.
+        fully_cancel_message (bool): Wether to fully cancel the message. (i.e. not send anything)
+        finished_message (str): The final message after processing. (e.g. "[tag] <player> i #### you!")
+        original_message (str): The original message before processing. (e.g. "[tag] <player> i hate you!")
+        """
+        is_bad: bool
+        fully_cancel_message: bool
+        finished_message: str
+        original_message: str
+
+    def __init__(self, logger: endstone.Logger, bmm: BreezeModuleManager, pdm: PlayerDataManager, btp: BreezeTextProcessing, plugin: Plugin):
+        self.plugin = plugin
+        self.logger = logger
+
+        self.pdm = pdm
+        self.btp = btp
+        self.bmm = bmm
+
+        self._event_bus = self._EventBus(logger)
+
+    def _load_extensions(self):
+        """
+        Loads extensions found by BreezeModuleManager
+
+        Should not be included in stub for extensions
+        """
+        for extension in self.bmm.extension_files:
+            self.logger.info(f"[BreezeModuleManager] Loading extension: {extension}")
+            self.bmm._load_extension(extension, self)
+
+    @property
+    def eventbus(self):
+        return self._event_bus
+
+    def on_breeze_chat_event(self, event:PlayerChatEvent, plugin):
+        """Called when a chat event is processed by Breeze. 
+        
+        Extensions can hook into this to do extra functions but they can NOT modify management."""
+
+        self._event_bus._emit("on_breeze_chat_event", event, plugin); self.logger.info("[BreezeExtensionAPI] on_breeze_chat_event")
+
+        return event, plugin
+
+    def on_breeze_chat_processed(self, event:PlayerChatEvent, handler_output: "BreezeExtensionAPI.HandlerOutput", is_bad:bool, plugin:Plugin):
+        """Called after Breeze has processed a chat event. Breeze is a dictionary of values from Breeze's message evaluation and stuff. 
+        
+        Extensions can hook into this to do extra functions but they can NOT modify management."""
+
+        self._event_bus._emit("on_breeze_chat_processed", event, handler_output, is_bad, plugin); self.logger.info("[BreezeExtensionAPI] on_breeze_chat_processed")
+
+        return event, handler_output, is_bad, plugin
 
 class Breeze(Plugin): #PLUGIN
     bea: BreezeExtensionAPI
@@ -371,12 +375,8 @@ class Breeze(Plugin): #PLUGIN
         current_directory = os.getcwd()
         self.server.logger.info(f"{current_directory}, {__file__}")
 
-        # pdm and btp are re-passed to the extension API
-        self.logger.info('extensionapiing'); self.bea = BreezeExtensionAPI(self.logger, pdm=self.pdm, btp=self.btp); self.bea.initialize(self)
-
-        self.logger.info('modulemanagering'); self.bmm = BreezeModuleManager(logger=self.logger, pdm=self.pdm, btp=self.btp); self.bmm.start(self.installation_path)
-
-        
+        self.bmm = BreezeModuleManager(logger=self.logger, pdm=self.pdm, btp=self.btp); self.bmm.start(self.installation_path)
+        self.bea = BreezeExtensionAPI(self.logger, pdm=self.pdm, btp=self.btp, bmm=self.bmm, plugin=self); self.bea._load_extensions()
 
     def __init__(self):
         super().__init__()

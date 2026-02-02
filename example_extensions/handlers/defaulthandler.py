@@ -1,12 +1,16 @@
-# Rename to handler.py in breeze/extensions/ folder!
+# Rename to handler.py in plugins/breeze/extensions/ folder!
 
 # Use this as a template for your own handlers, as this is identical to the default one
 
-from extensions import BreezeTextProcessing, PlayerDataManager, BreezeExtensionAPI #type: ignore
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from extensions import BreezeTextProcessing, PlayerDataManager, BreezeExtensionAPI #type: ignore
 
 import time
 from random import randint
 
+# handlers must have a handler function
 def handler(handler_input: "BreezeExtensionAPI.HandlerInput", player_data_manager: "PlayerDataManager", breeze_text_processing: "BreezeTextProcessing") -> "BreezeExtensionAPI.HandlerOutput":
     # player_data_manager is an instance of PlayerDataManager used by the server. It can be used to get and update player data.
     # The server will automatically add/remove player data from it
