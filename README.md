@@ -1,5 +1,5 @@
 <div align="center">
-<img src="images/breeze.png" alt="breeze" width="300"/>
+<img src="images/breeze2.png" alt="breeze"/>
 
 # breeze - Automated moderation & moderation tool for Endstone
 </div>
