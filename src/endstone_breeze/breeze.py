@@ -1,5 +1,6 @@
-from endstone import ColorFormat, scheduler
-from endstone.event import event_handler, PlayerJoinEvent, PlayerChatEvent, PlayerQuitEvent, EventPriority
+from endstone import ColorFormat
+from endstone.command import Command, CommandSender
+from endstone.event import event_handler, PlayerJoinEvent, PlayerChatEvent, PlayerQuitEvent, EventPriority, PlayerCommandEvent
 from endstone.plugin import Plugin
 import endstone
 import importlib.resources as resources
@@ -18,6 +19,7 @@ import os, time, asyncio, inspect, importlib.util, sys, threading
 from collections import defaultdict
 from pathlib import Path
 from typing import TypedDict, cast
+import yaml
 
 class PlayerData(TypedDict):
     latest_time_a_message_was_sent: float
@@ -150,17 +152,12 @@ class BreezeModuleManager():
     def _install_breeze(self, path: Path):
         self.breeze_installation_path = Path(path).resolve()
 
-        if not path.is_dir():
-            os.makedirs(path / "extensions", exist_ok=True)
-            os.makedirs(path / "types", exist_ok=True)
-            self.is_breeze_installed = True
-        else:
-            os.makedirs(path / "extensions", exist_ok=True)
-            os.makedirs(path / "types", exist_ok=True)
-            self.is_breeze_installed = True
+        os.makedirs(path / "extensions" / "handlers", exist_ok=True)
+        os.makedirs(path / "types", exist_ok=True)
+        os.makedirs(path / "storage", exist_ok=True)
+        self.is_breeze_installed = True
 
-        try:
-            # import & write resource files
+        try: # write resource files      
             resource_files = files("endstone_breeze").joinpath("resources")
             
             types_pyi_content = resource_files.joinpath("types.pyi").read_text()
@@ -169,67 +166,111 @@ class BreezeModuleManager():
             with open(types_output_path, "w") as f:
                 f.write(types_pyi_content)
             
-            self.logger.info(f"[BreezeModuleManager] Installed types.pyi to {types_output_path}")
-            
             init_pyi_content = resource_files.joinpath("__init__.pyi").read_text()
             init_output_path = self.breeze_installation_path / "extensions" / "__init__.pyi"
             
             with open(init_output_path, "w") as f:
                 f.write(init_pyi_content)
-            
-            self.logger.info(f"[BreezeModuleManager] Installed __init__.pyi to {init_output_path}")
+
+            handlers_init_pyi_content = resource_files.joinpath("handlers").joinpath("__init__.pyi").read_text()
+            handlers_init_output_path = self.breeze_installation_path / "extensions" / "handlers" / "__init__.pyi"
+
+            with open(handlers_init_output_path, "w") as f:
+                f.write(handlers_init_pyi_content)
         except Exception as e:
             self.logger.error(f"[BreezeModuleManager] Failed to install type resources: {e}")
 
+        if not Path(self.breeze_installation_path / "config.yaml").resolve().is_file():
+            try: # write default config
+                resource_files = files("endstone_breeze").joinpath("resources")
+
+                default_config_content = resource_files.joinpath("config.yaml").read_text()
+                config_output_path = self.breeze_installation_path / "config.yaml"
+                
+                with open(config_output_path, "w") as f:
+                    f.write(default_config_content)
+                
+                self.logger.info(f"[BreezeModuleManager] Installed config successfully")
+            except Exception as e:
+                self.logger.error(f"[BreezeModuleManager] Failed to install config: {e}")
+
+        with open(self.breeze_installation_path / "config.yaml", "r") as f:
+            config = yaml.safe_load(f)
+
+        self._config = config
+
+        try: # write handlers
+            resource_files = files("endstone_breeze").joinpath("resources").joinpath("handlers")
+            default_handler_content = resource_files.joinpath("default_handler.py").read_text()
+
+            default_handler_output_path = self.breeze_installation_path / "extensions" / "handlers" / "default_handler.py"
+
+            with open(default_handler_output_path, "w") as f:
+                f.write(default_handler_content)
+        except Exception as e:
+            self.logger.error(f"[BreezeModuleManager] Failed to install handlers: {e}")
             
     def _find_extensions(self):
         if self.is_breeze_installed and self.breeze_installation_path is not None:
             extensions_path = self.breeze_installation_path / "extensions"
             extension_files = [f for f in os.listdir(extensions_path) if Path(f).suffix == ".py" and not f.startswith("__") and not Path(f).suffix == ".pyi"]
 
-            if "handler.py" in extension_files:
-                module_name = "handler"
-                handler_path = extensions_path / "handler.py"
-                handler_func = None
-                extension_files.remove("handler.py")
-
-                self.logger.info(f"[BreezeModuleManager] Found a custom handler...")
-
-                spec = importlib.util.spec_from_file_location(module_name, handler_path)
-                if spec is None or spec.loader is None:
-                    self.logger.error("[BreezeModuleManager] Failed to create spec for handler.py")
-                    return
-                    
-                module = importlib.util.module_from_spec(spec)
-                sys.modules[module_name] = module
-                spec.loader.exec_module(module)
-
-                handler_func = getattr(module, "handler", None)
-
-                if handler_func is None:
-                    self.logger.warning("[BreezeModuleManager] Custom handler found but no 'handler' function defined. Falling back to the default handler.")
-                    self.handler_state = self.HandlerState.NONE
-                    self.handler = self._default_handler
-                else:
-                    self.logger.info("[BreezeModuleManager] The custom handler will now override Breeze's default handler.")
-                    self.handler_state = self.HandlerState.CUSTOM
-                    self.handler = handler_func
-            else:
-                self.handler = self._default_handler
-                self.handler_state = self.HandlerState.DEFAULT
-
             self.logger.info(f"[BreezeModuleManager] Found {len(extension_files)} extensions in {extensions_path}: {extension_files}")
             self.extension_files = extension_files
+
+            handler_from_config = self._config.get("handler")
+            if handler_from_config:
+                handler_path = extensions_path / "handlers" / handler_from_config
+                if handler_path.is_file():
+                    self.logger.info(f"[BreezeModuleManager] Loading handler from config: {handler_from_config}")
+
+                    module_name = f"breeze.extensions.handlers.{handler_from_config.removesuffix('.py')}"
+                    handler_func = None
+                    handler_path = extensions_path / "handlers" / handler_from_config
+
+                    spec = importlib.util.spec_from_file_location(module_name, handler_path)
+                    if not spec:
+                        self.logger.error(f"[BreezeModuleManager] Failed to create spec for handler {handler_from_config}, falling back to default handler.")
+                        self.handler = self._default_handler
+                        self.handler_state = self.HandlerState.DEFAULT
+                        return
+                    if not spec.loader:
+                        self.logger.error(f"[BreezeModuleManager] Failed to create spec for handler {handler_from_config}, falling back to default handler.")
+                        self.handler = self._default_handler
+                        self.handler_state = self.HandlerState.DEFAULT
+                        return
+
+                    module = importlib.util.module_from_spec(spec)
+                    sys.modules[module_name] = module
+                    spec.loader.exec_module(module)
+                    handler_func = getattr(module, "handler", None)
+
+                    if handler_func is None:
+                        self.logger.warning("[BreezeModuleManager] Custom handler found but no 'handler' function defined. Falling back to the default handler.")
+                        self.handler_state = self.HandlerState.NONE
+                        self.handler = self._default_handler
+                    else:
+                        self.logger.info("[BreezeModuleManager] The custom handler will now override Breeze's default handler.")
+                        self.handler_state = self.HandlerState.CUSTOM
+                        self.handler = handler_func
+                else:
+                    self.logger.warning(f"[BreezeModuleManager] Handler from config not found: {handler_from_config}, falling back to default handler.")
+                    self.handler = self._default_handler
+                    self.handler_state = self.HandlerState.DEFAULT
+            else:
+                self.logger.info("[BreezeModuleManager] No handler specified in config, falling back to default handler.")
+                self.handler = self._default_handler
+                self.handler_state = self.HandlerState.DEFAULT
 
     def _load_extension(self, extension_filename: str, bea: "BreezeExtensionAPI"):
         """load extension manually, must be simple str of filename and must be in extensions/ directory"""
         if not self.is_breeze_installed or self.breeze_installation_path is None:
-            self.logger.warning("BreezeModuleManager: Cannot load extension because Breeze is not installed.")
+            self.logger.warning("[BreezeModuleManager] Cannot load extension because Breeze is not installed.")
             return
     
         ext_path = self.breeze_installation_path / "extensions" / extension_filename
         if not ext_path.is_file():
-            self.logger.error(f"BreezeModuleManager: Extension file not found: {ext_path}")
+            self.logger.error(f"[BreezeModuleManager] Extension file not found: {ext_path}")
             return
 
         module_name = extension_filename.removesuffix(".py")
@@ -239,13 +280,13 @@ class BreezeModuleManager():
             spec = importlib.util.spec_from_file_location(module_name, str(ext_path))
 
             if spec is None or spec.loader is None:
-                self.logger.error(f"BreezeModuleManager: Failed to create spec for {module_name}")
+                self.logger.error(f"[BreezeModuleManager] Failed to create spec for {module_name}")
                 return
 
             module = importlib.util.module_from_spec(spec)
             sys.modules[module_name] = module
             spec.loader.exec_module(module)
-            self.logger.info(f"BreezeModuleManager: Loaded extension module: {module_name}")
+            self.logger.info(f"[BreezeModuleManager] Loaded extension module: {module_name}")
 
             if hasattr(module, "on_load"):
                 try:
@@ -363,10 +404,6 @@ class BreezeExtensionAPI():
         return event, handler_output, is_bad, plugin
 
 class Breeze(Plugin): #PLUGIN
-    bea: BreezeExtensionAPI
-    bmm: BreezeModuleManager
-    pdm: PlayerDataManager
-    btp: BreezeTextProcessing
 
     def on_enable(self) -> None:
         self.logger.info("Enabling Breeze")
@@ -377,6 +414,11 @@ class Breeze(Plugin): #PLUGIN
 
         self.bmm = BreezeModuleManager(logger=self.logger, pdm=self.pdm, btp=self.btp); self.bmm.start(self.installation_path)
         self.bea = BreezeExtensionAPI(self.logger, pdm=self.pdm, btp=self.btp, bmm=self.bmm, plugin=self); self.bea._load_extensions()
+
+        with open(self.installation_path / "config.yaml", "r") as f:
+            config = yaml.safe_load(f)
+
+        self.breeze_config = config
 
     def __init__(self):
         super().__init__()
@@ -406,6 +448,31 @@ class Breeze(Plugin): #PLUGIN
         
         return cast(BreezeExtensionAPI.HandlerOutput, raw)
     
+    @event_handler
+    def on_private_message(self, event: PlayerCommandEvent):
+        parts = event.command.split(' ', 2)
+        if parts[0] in ['/msg', '/tell', '/whisper', '/w']:
+            # ["/msg", "recipient", "message"]
+            if len(parts) < 2:
+                return # command would have errored anyways
+
+            h_input: BreezeExtensionAPI.HandlerInput = {
+                "message": parts[2] if len(parts) > 2 else "",
+                "player": event.player,
+                "chat_format": '',
+                "recipients": []
+            }
+
+            handled = self.handle(h_input)
+
+            self.bea.eventbus._emit("on_breeze_chat_processed", event, handled, handled["is_bad"], self)
+
+            if handled["fully_cancel_message"]:
+                event.cancel()
+                return
+            
+            event.command = f"{parts[0]} {parts[1]} {handled['finished_message']}"
+
     @event_handler
     def on_player_quit(self, event: PlayerQuitEvent):
         player = event.player

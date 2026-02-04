@@ -6,8 +6,7 @@ utilizes a library (https://pypi.org/project/profanity-check/). this is the best
 
 2. ProfanityExtralist
 this is a small list of bad words that the profanity-check library misses, like "shlt".
-this isn't recommended as a primary way to detect profanity, but is a good extra layer.
-this is very sensitive, and may catch things that are not bad words. if you find another word that should be added to the whitelist, tell me!!!
+this **must be layered on top of another check**, as it does not directly catch curse words, only variations that the main library misses.
 
 3. ProfanityLonglist
 this is a large list of bad words, and is very sensitive. it will catch any word that contains a bad word as a substring.

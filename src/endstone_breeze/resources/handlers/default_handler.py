@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 import time
 from random import randint
 
-# handlers must have a handler function
+# handles messages
 def handler(handler_input: "BreezeExtensionAPI.HandlerInput", player_data_manager: "PlayerDataManager", breeze_text_processing: "BreezeTextProcessing") -> "BreezeExtensionAPI.HandlerOutput":
     # player_data_manager is an instance of PlayerDataManager used by the server. It can be used to get and update player data.
     # The server will automatically add/remove player data from it
