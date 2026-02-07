@@ -1,242 +1,158 @@
-"""
-profanity utilities, with three layers of classes to detect profanity:
-
-1. ProfanityCheck (RECOMMENDED)
-utilizes a library (https://pypi.org/project/profanity-check/). this is the best, and most accurate way to detect profanity. it uses a machine learning model to detect profanity, and is very good at detecting misspellings and variations of bad words.
-
-2. ProfanityExtralist
-this is a small list of bad words that the profanity-check library misses, like "shlt".
-this **must be layered on top of another check**, as it does not directly catch curse words, only variations that the main library misses.
-
-3. ProfanityLonglist
-this is a large list of bad words, and is very sensitive. it will catch any word that contains a bad word as a substring.
-this is NOT recommended as a primary way to detect profanity, but is a good extra layer.
-this is very sensitive, and may catch things that are not bad words. if you find another word that should be added to the longlist, tell me!!!
-this list is taken directly from Minecraft's banned words list, and is base64 encoded.
-this is likely the cheapest method
-
-the recommended way to use this is to first check with the profanity-check library, then the extralist (and maybe the longlist)
-"""
-from profanity_check import predict, predict_prob 
+from profanity_check import predict
 from .general_utils import split_into_tokens, levenshtein
 import base64
 from wordfreq import top_n_list
 
-from .words import blacklist
-from .words import whitelist
-from .words import longlist as unlonglisted # base64 encoded swear words
+from .words import blacklist, whitelist
+from .words import longlist as unlonglisted
+
 _longlist = [
     w.strip().lower()
     for w in base64.b64decode(unlonglisted).decode("utf-8", errors="ignore").splitlines()
     if w.strip()
 ]
 
-english_words_list = set(top_n_list("en", 10000)) # Yes, this WILL have the curse words too, but this is only for Extralist and you will be layering Extralist on top of other filters
+english_words_list = set(top_n_list("en", 10000))
+
 
 class ProfanityFilter:
-    def is_profane(self, text: str) -> bool:
+    def is_profane(
+        self,
+        text: str,
+        word_list: set[str] | None = None,
+        allowed_words_list: set[str] | None = None,
+    ) -> bool:
         raise NotImplementedError
 
-    def censor(self, text: str, replacement: str = "#") -> str:
+    def censor(
+        self,
+        text: str,
+        replacement: str = "#",
+        neighbors: int = 1,
+        word_list: set[str] | None = None,
+        allowed_words_list: set[str] | None = None,
+    ) -> str:
         raise NotImplementedError
 
 
-# extralist
-class ProfanityExtralist(ProfanityFilter):
-    def is_profane(self, text: str) -> bool:
-        """
-        checks a string if it has any word found in the extra blacklist in words.py
-
-        note that this is NOT a replacement for the other like the profanity-check ones, and this is an extra list because profanity-check doesn't see things like "shlt"
-
-        Args:
-            text (str): input string to check.
-        """
-        tokens = split_into_tokens(text); tokens = [t.lower() for t in tokens] # split into words + separators
+class ProfanityExtraList(ProfanityFilter):
+    def is_profane(self, text: str, word_list=None, allowed_words_list=None) -> bool:
+        tokens = [t.lower() for t in split_into_tokens(text)]
+        blocked = word_list if word_list is not None else blacklist
+        allowed = allowed_words_list if allowed_words_list is not None else whitelist
 
         for token in tokens:
-            token_lower = token.lower()
-            if token_lower in whitelist:
-                continue
-            elif token_lower in english_words_list:
+            if token in allowed or token in english_words_list:
                 continue
 
-            for bad in blacklist:
-                # Rule 1: fuzzy match full word
-                dist = levenshtein(token_lower, bad)
-                if dist <= max(1, len(bad) // 1.3):
+            for bad in blocked:
+                if levenshtein(token, bad) <= max(1, len(bad) // 1.3):
                     return True
 
-                # Rule 2: substring fuzzy match if lengths are close
-                if abs(len(token_lower) - len(bad)) <= 5:
-                    for j in range(0, len(token_lower) - len(bad) + 1):
-                        chunk = token_lower[j:j+len(bad)]
-                        dist = levenshtein(chunk, bad)
-                        if dist <= max(1, len(bad) // 2):
+                if abs(len(token) - len(bad)) <= 5:
+                    for i in range(len(token) - len(bad) + 1):
+                        if levenshtein(token[i:i + len(bad)], bad) <= max(1, len(bad) // 2):
                             return True
-
         return False
 
-    def censor(self, text: str, replacement: str = "#", neighbors: int = 1) -> str:
-        """
-        censors words found in the extra word list things profanity-check misses, checking word-by-word
-        
-        note that this is NOT a replacement for the other like the profanity-check ones, and this is an extra list because profanity-check doesn't see things like "shlt"
-
-        Args:
-            text (str): the input text to censor.
-            replacement (str, optional): character to use for censoring. defaults to '#' (ROBLOX!!!).
-            neighbors (int, optional): number of neighboring words to also censor. defaults to 1 (no neigboring word touched).
-
-        Returns:
-            str: the censored text
-        """
+    def censor(self, text: str, replacement="#", neighbors=1, word_list=None, allowed_words_list=None) -> str:
         tokens = split_into_tokens(text)
         lowered = [t.lower() for t in tokens]
         n = len(tokens)
         censored = [False] * n
 
-        for i, token in enumerate(tokens):
-            if token.isalnum() and self.is_profane(token):
+        for i, tok in enumerate(tokens):
+            if tok.isalnum() and self.is_profane(tok, word_list, allowed_words_list):
                 censored[i] = True
 
-                # neighbor logic
-                j, words_seen = i, 0
-                while j > 0 and words_seen < neighbors:
+                j = i
+                seen = 0
+                while j > 0 and seen < neighbors:
                     j -= 1
                     if lowered[j].isalnum():
                         censored[j] = True
-                        words_seen += 1
+                        seen += 1
 
-                j, words_seen = i, 0
-                while j < n - 1 and words_seen < neighbors:
+                j = i
+                seen = 0
+                while j < n - 1 and seen < neighbors:
                     j += 1
                     if lowered[j].isalnum():
                         censored[j] = True
-                        words_seen += 1
+                        seen += 1
 
-        # Build censored output
-        censored_tokens = [
-            (replacement * len(t)) if censored[i] and lowered[i].isalnum() else t
+        return "".join(
+            replacement * len(t) if censored[i] and lowered[i].isalnum() else t
             for i, t in enumerate(tokens)
-        ]
-
-        return "".join(censored_tokens)
+        )
 
 
-# longlist
-class ProfanityLonglist(ProfanityFilter):
-    def is_profane(self, text: str) -> bool:
-        """
-        checks for profanity in the extra longlist of profanities, returns true anything is found
+class ProfanityList(ProfanityFilter):
+    def is_profane(self, text: str, word_list=None, *_args, **_kwargs) -> bool:
+        tokens = [t.lower() for t in split_into_tokens(text)]
+        blocked = word_list if word_list is not None else _longlist
 
-        note that this is NOT a replacement for the other like the profanity-check ones, and this is an extra list because profanity-check doesn't see things like "shlt"
-        """
-        tokens = split_into_tokens(text); tokens = [t.lower() for t in tokens] # split into words + separators, then lower
-
-        # check for bad words, return true if even just one is found
         for token in tokens:
-            for bad in _longlist:
+            for bad in blocked:
                 if bad in token:
                     return True
         return False
-                
-    def censor(self, text: str, replacement: str = "#", neighbors: int = 1) -> str:
-        """
-        Censors words found in the extra longlist of profanities, replacing them and their neighbors.
 
-        note that this is NOT a replacement for the other like the profanity-check ones, and this is an extra list because profanity-check doesn't see things like "shlt"
-
-        Args:
-            text (str): the input text to censor.
-            replacement (str, optional): character to use for censoring. Defaults to '#'.
-            neighbors (int, optional): number of words in the censoring window, including the bad word itself
-
-        Returns:
-            str: the censored text.
-        """
-        def is_word_token(tok: str) -> bool:
-            # treat as a word if it contains at least one alphabetic character
-            return any(ch.isalpha() for ch in tok)
-
-        # tokenize + lowercase in place
-        tokens = split_into_tokens(text); tokens = [t.lower() for t in tokens]
+    def censor(self, text: str, replacement="#", neighbors=1, word_list=None, *_args, **_kwargs) -> str:
+        tokens = split_into_tokens(text)
+        lowered = [t.lower() for t in tokens]
         n = len(tokens)
         censored = [False] * n
 
-        for i, token in enumerate(tokens):
-            if is_word_token(token):
-                for bad in _longlist:
-                    if bad in token:
-                        # way better checking but i don't wanna put this in is_profane_longlist
+        blocked = word_list if word_list is not None else _longlist
 
-                        # always censor the bad word itself
-                        censored[i] = True
+        for i, tok in enumerate(lowered):
+            for bad in blocked:
+                if bad in tok:
+                    censored[i] = True
 
-                        # extend left (neighbors - 1 words)
-                        j, words_seen = i, 0
-                        while j > 0 and words_seen < neighbors - 1:
-                            j -= 1
-                            if is_word_token(tokens[j]):
-                                censored[j] = True
-                                words_seen += 1
+                    j = i
+                    seen = 0
+                    while j > 0 and seen < neighbors - 1:
+                        j -= 1
+                        if lowered[j].isalnum():
+                            censored[j] = True
+                            seen += 1
 
-                        # extend right (neighbors - 1 words)
-                        j, words_seen = i, 0
-                        while j < n - 1 and words_seen < neighbors - 1:
-                            j += 1
-                            if is_word_token(tokens[j]):
-                                censored[j] = True
-                                words_seen += 1
-                        break  # stop after first badword match
+                    j = i
+                    seen = 0
+                    while j < n - 1 and seen < neighbors - 1:
+                        j += 1
+                        if lowered[j].isalnum():
+                            censored[j] = True
+                            seen += 1
+                    break
 
-        # rebuild text with censored replacements
-        result_tokens = []
-        for token, flag in zip(tokens, censored):
-            if flag and is_word_token(token):
-                result_tokens.append(replacement * len(token))
-            else:
-                result_tokens.append(token)
-
-        return "".join(result_tokens)
+        return "".join(
+            replacement * len(t) if censored[i] and lowered[i].isalnum() else t
+            for i, t in enumerate(tokens)
+        )
 
 
-# profanity-check
 class ProfanityCheck(ProfanityFilter):
-    def is_profane(self, text: str) -> bool:
-        """
-        check if the given text contains profanity
-        """
+    def is_profane(self, text: str, *_args, **_kwargs) -> bool:
+        return bool(predict(["".join(split_into_tokens(text))])[0])
+
+    def censor(self, text: str, replacement="#", neighbors=1, window_size=1, *_args, **_kwargs) -> str:
         tokens = split_into_tokens(text)
-        normalized_text = "".join(tokens)  # join tokens back into a single string
-        return bool(predict([normalized_text])[0])
+        lowered = [t.lower() for t in tokens]
+        n = len(tokens)
 
-    def censor(self, text: str, replacement: str = "#", neighbors: int = 1, window_size: int = 1) -> str:
-        """
-        Censors profane words using a sliding window.
-        Works directly on tokens from split_into_tokens.
-        """
-        raw_tokens = split_into_tokens(text)             # includes words + separators
-        lowered_tokens = [t.lower() for t in raw_tokens] # normalized for detection
-        n = len(lowered_tokens)
-
-        # build sliding windows
-        windows = [" ".join(lowered_tokens[i:i+window_size]) for i in range(n)]
-        predictions = predict(windows)
+        windows = [" ".join(lowered[i:i + window_size]) for i in range(n)]
+        flags = predict(windows)
 
         censored = [False] * n
-
-        for i, flag in enumerate(predictions):
-            if flag == 1:
-                start = max(0, i - neighbors)
-                end = min(n, i + window_size + neighbors)
-                for j in range(start, end):
+        for i, flag in enumerate(flags):
+            if flag:
+                for j in range(max(0, i - neighbors), min(n, i + window_size + neighbors)):
                     censored[j] = True
 
-        # censor words only, keep separators intact
-        censored_tokens = [
-            (replacement * len(tok)) if censored[i] and tok.strip() and not tok.isspace() else tok
-            for i, tok in enumerate(raw_tokens)
-        ]
-
-        return "".join(censored_tokens)
+        return "".join(
+            replacement * len(t) if censored[i] and t.strip() else t
+            for i, t in enumerate(tokens)
+        )

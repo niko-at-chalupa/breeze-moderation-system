@@ -1,6 +1,9 @@
 # Handler to use from the handlers/ directory. If does it does not exist, will fall back to Breeze's internal default handler.
 handler: "default_handler.py"
 
+# Weather to use message handling extensions. If false, Breeze will **NOT use any handler, even the internal default one**. Handlers **will still load**, but will not be used.
+use_message_handling: true
+
 # Whether to disable chat functionality if an extension fails to load. This is great for security
 disable_chat_on_extension_load_error: false
 # NOTE: DOES NOT WORK YET

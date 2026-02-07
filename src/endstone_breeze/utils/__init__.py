@@ -1,8 +1,8 @@
 from .profanity_utils import (
     ProfanityFilter,
     ProfanityCheck,
-    ProfanityExtralist,
-    ProfanityLonglist,
+    ProfanityExtraList,
+    ProfanityList,
 )
 
 from .general_utils import (
@@ -15,8 +15,8 @@ __all__ = [
     # profanity
     "ProfanityFilter",
     "ProfanityCheck",
-    "ProfanityExtralist",
-    "ProfanityLonglist",
+    "ProfanityExtraList",
+    "ProfanityList",
 
     # general utils
     "split_into_tokens",

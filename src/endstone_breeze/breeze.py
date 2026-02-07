@@ -7,10 +7,10 @@ import importlib.resources as resources
 from importlib.resources import files
 from types import ModuleType
 
-from .utils.profanity_utils import ProfanityCheck, ProfanityLonglist, ProfanityExtralist
+from .utils.profanity_utils import ProfanityCheck, ProfanityList, ProfanityExtraList
 pc = ProfanityCheck()
-pl = ProfanityLonglist()
-pe = ProfanityExtralist()
+pl = ProfanityList()
+pe = ProfanityExtraList()
 from .utils.general_utils import to_hash_mask, split_into_tokens
 
 from enum import Enum
@@ -46,7 +46,47 @@ class PlayerDataManager:
             del self.player_data[name]
 
 class BreezeTextProcessing:
+    def censor_with_word_list(self, text: str, word_list: set[str], allowed_words_list: set[str] = set(), replacement_char: str = "#") -> tuple[str, bool]:
+        """
+        Censors a given text with a custom word list.
+
+        Args:
+            text (str): The text to censor
+        Returns:
+            tuple[str, bool]: A tuple containing:
+                - The censored text (str)
+                - Boolean indicating if any profanity was found (bool)
+        """
+
+        finished_message = text
+        is_bad = False
+        
+        if pe.is_profane(finished_message, word_list=word_list):
+            is_bad = True
+            finished_message = pe.censor(text, replacement=replacement_char, word_list=word_list, allowed_words_list=allowed_words_list)
+
+        if pl.is_profane(finished_message, word_list=word_list):
+            is_bad = True
+            finished_message = pl.censor(text, replacement=replacement_char, word_list=word_list, allowed_words_list=allowed_words_list)
+            
+        return (finished_message, is_bad)
+
     def check_and_censor(self, text: str, checks: dict | None = None) -> tuple[str, bool, list]:
+        """
+        Checks and censors a given text with multiple profanity checkers. You can not customize its wordlist
+
+        Args:
+            text (str): The text to check and censor
+            checks (dict | None, optional): A dictionary specifying which checks to perform. Defaults to None. The possible keys are:
+                - "Profanity-check" (bool): Whether to use the basic profanity check
+                - "Extralist" (bool): Whether to use the extralist profanity check
+                - "Longlist" (bool): Whether to use the longlist profanity check (only censors misspellings of bad words)
+        Returns:
+            tuple[str, bool, list]: A tuple containing:
+                - The censored text (str)
+                - A boolean indicating if any profanity was found (bool)
+                - A list of the checks that caught profanity (list)
+        """
         finished_message = text
         defaults = {
             "Profanity-check": True,
@@ -418,6 +458,9 @@ class Breeze(Plugin): #PLUGIN
         with open(self.installation_path / "config.yaml", "r") as f:
             config = yaml.safe_load(f)
 
+        if config.get("use_message_handling", True) is not True:
+            self.logger.info("Automatic message handling is disabled, Breeze will not modify or process messages.")
+
         self.breeze_config = config
 
     def __init__(self):
@@ -450,6 +493,8 @@ class Breeze(Plugin): #PLUGIN
     
     @event_handler
     def on_private_message(self, event: PlayerCommandEvent):
+        if self.breeze_config.get("use_message_handling", True) is not True:
+            return
         parts = event.command.split(' ', 2)
         if parts[0] in ['/msg', '/tell', '/whisper', '/w']:
             # ["/msg", "recipient", "message"]
@@ -486,6 +531,8 @@ class Breeze(Plugin): #PLUGIN
       
     @event_handler(priority=EventPriority(1))
     def on_chat_sent_by_player(self, event: PlayerChatEvent):
+        if self.breeze_config.get("use_message_handling", True) is not True:
+            return
         event.cancel()
         self.bea.eventbus._emit("on_breeze_chat_event", event, self)
 
