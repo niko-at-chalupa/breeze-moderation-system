@@ -18,7 +18,7 @@ from random import randint
 import os, time, asyncio, inspect, importlib.util, sys, threading
 from collections import defaultdict
 from pathlib import Path
-from typing import TypedDict, cast
+from typing import TypedDict, cast, Callable, Any
 import yaml
 
 class PlayerData(TypedDict):
@@ -411,6 +411,9 @@ class BreezeExtensionAPI():
 
         self._event_bus = self._EventBus(logger)
 
+    plugin: Plugin
+    logger: endstone.Logger
+
     def _load_extensions(self):
         """
         Loads extensions found by BreezeModuleManager
@@ -442,6 +445,11 @@ class BreezeExtensionAPI():
         self._event_bus._emit("on_breeze_chat_processed", event, handler_output, is_bad, plugin); self.logger.info("[BreezeExtensionAPI] on_breeze_chat_processed")
 
         return event, handler_output, is_bad, plugin
+    
+    def run_task(self, task: Callable[[], None], delay: int = 0, period: int = 0):
+        """Wrapper for the task scheduler's run_task method. Use this to run things in the server's thread."""
+        
+        self.plugin.server.scheduler.run_task(self.plugin, task, delay, period)
 
 class Breeze(Plugin): #PLUGIN
 
@@ -462,6 +470,8 @@ class Breeze(Plugin): #PLUGIN
             self.logger.info("Automatic message handling is disabled, Breeze will not modify or process messages.")
 
         self.breeze_config = config
+
+        self.chat_disabled = False
 
     def __init__(self):
         super().__init__()
@@ -529,11 +539,15 @@ class Breeze(Plugin): #PLUGIN
         pdata["latest_time_a_message_was_sent"] = time.monotonic() - 10
         pdata["last_message"] = ""
       
-    @event_handler(priority=EventPriority(1))
+    @event_handler(priority=EventPriority.LOWEST)
     def on_chat_sent_by_player(self, event: PlayerChatEvent):
         if self.breeze_config.get("use_message_handling", True) is not True:
             return
         event.cancel()
+
+        if self.chat_disabled:
+            event.player.send_message(f"{ColorFormat.RED}Chat is temporarily disabled for technical reasons")
+            return
         self.bea.eventbus._emit("on_breeze_chat_event", event, self)
 
         h_input: BreezeExtensionAPI.HandlerInput = {

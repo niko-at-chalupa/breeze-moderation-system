@@ -86,3 +86,10 @@ class BreezeExtensionAPI:
     ) -> tuple[PlayerChatEvent, HandlerOutput, bool, Plugin]: ...
     
     def initialize(self, plugin_instance: Plugin) -> None: ...
+
+    def run_task(
+        self, 
+        task: Callable[[], None], 
+        delay: int = 0, 
+        period: int = 0
+    ): ...
