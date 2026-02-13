@@ -60,6 +60,7 @@ class BreezeExtensionAPI:
     logger: Logger
     pdm: PlayerDataManager | None
     btp: BreezeTextProcessing | None
+    plugin: Plugin
     
     def __init__(
         self, 

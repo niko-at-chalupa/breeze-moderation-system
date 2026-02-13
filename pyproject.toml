@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "endstone-breeze"
-version = "1.7.0"
-description = "chat manager with extension support"
+version = "1.9.0"
+description = "moderation system with extension support"
 authors = [
     { name = "niko-at-chalupa"},
     { name = "Sasha"}
