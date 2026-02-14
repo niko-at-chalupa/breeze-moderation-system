@@ -218,7 +218,6 @@ Soon!
 >    webhook.execute()
 >
 >def on_load(bea: "BreezeExtensionAPI"):
->    return
 >    def on_chat_processed(event: "PlayerChatEvent", handler_output: "BreezeExtensionAPI.HandlerOutput", is_bad, plugin: "Plugin"):
 >        if handler_output.get("fully_cancel_message", False):
 >            return
