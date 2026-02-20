@@ -104,6 +104,12 @@ class BreezeTextProcessing:
 
         return (finished_message, is_bad)
 
+    def mask_text(self, text: str):
+        """
+        Masks text by replacing each alphabetical character into a '#' *(or other char, is specified)*
+        """
+        return to_hash_mask(text)
+
     def check_and_censor(
         self, text: str, checks: dict | None = None
     ) -> tuple[str, bool, list]:
