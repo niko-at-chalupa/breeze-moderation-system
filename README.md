@@ -227,7 +227,6 @@ Soon!
 >
 >        author = event.player.name
 >        content = f"{handler_output.get('finished_message', '(No message)')}"
->        xuid = event.player.skin
 >
 >        threading.Thread(
 >            target=send_webhook,
