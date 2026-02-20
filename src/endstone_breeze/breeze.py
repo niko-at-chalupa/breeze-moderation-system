@@ -197,7 +197,6 @@ class BreezeModuleManager:
         player_data_manager: PlayerDataManager,
         breeze_text_processing: BreezeTextProcessing,
     ) -> "BreezeExtensionAPI.HandlerOutput":
-        sender_uuid = str(handler_input["player"].unique_id)
         finished_message = handler_input["message"]
 
         local_player_data = player_data_manager.get_player_data(
@@ -205,9 +204,7 @@ class BreezeModuleManager:
         )
         is_bad = False
         fully_cancel_message = (False, "")
-        caught = []
         should_check_message = True
-        worthy_to_log = False
 
         # spam check
         if time.monotonic() - local_player_data["latest_time_a_message_was_sent"] < 0.5:
@@ -219,19 +216,9 @@ class BreezeModuleManager:
             should_check_message = False
 
         if should_check_message:
-            finished_message, is_bad, caught = breeze_text_processing.check_and_censor(
+            finished_message, is_bad, _ = breeze_text_processing.check_and_censor(
                 handler_input["message"]
             )
-
-        # finally, after checking send the message and some extra stuff
-        if is_bad:
-            worthy_to_log = True
-
-        if not fully_cancel_message[0]:
-            pass
-        else:
-            if randint(1, 3) == 1:
-                worthy_to_log = True
 
         player_data_manager.update_player_data(
             handler_input["player"].name, handler_input["message"]
@@ -298,7 +285,7 @@ class BreezeModuleManager:
                 with open(config_output_path, "w") as f:
                     f.write(default_config_content)
 
-                self.logger.info(f"[BreezeModuleManager] Installed config successfully")
+                self.logger.info("[BreezeModuleManager] Installed config successfully")
             except Exception as e:
                 self.logger.error(
                     f"[BreezeModuleManager] Failed to install config: {e}"
