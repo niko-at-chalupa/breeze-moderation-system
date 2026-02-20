@@ -10,17 +10,20 @@ from endstone.event import (
 )
 from endstone.plugin import Plugin
 import endstone
-import importlib.resources as resources
 from importlib.resources import files
-from types import ModuleType
 from .utils.profanity_utils import ProfanityCheck, ProfanityList, ProfanityExtraList
 from .utils.general_utils import to_hash_mask, split_into_tokens
 from enum import Enum
 from random import randint
-import os, time, asyncio, inspect, importlib.util, sys, threading
+import os
+import time
+import asyncio
+import inspect
+import importlib.util
+import sys
 from collections import defaultdict
 from pathlib import Path
-from typing import TypedDict, cast, Callable, Any
+from typing import TypedDict, cast, Callable
 import yaml
 
 pc = ProfanityCheck()
