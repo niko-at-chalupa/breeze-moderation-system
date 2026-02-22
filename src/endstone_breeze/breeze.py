@@ -178,9 +178,7 @@ class BreezeModuleManager:
         DEFAULT = 1
         CUSTOM = 2
 
-    def __init__(
-        self, logger: endstone.Logger, pdm: PlayerDataManager, btp: BreezeTextProcessing
-    ):
+    def __init__(self, logger: endstone.Logger, pdm: PlayerDataManager, btp: BreezeTextProcessing, plugin: "Breeze"):
         self.is_breeze_installed = False
         self.breeze_installation_path = None
         self.extension_files = []
@@ -188,6 +186,8 @@ class BreezeModuleManager:
         self.pdm = pdm
         self.btp = btp
 
+        self.plugin = plugin
+        
         self.handler_state = self.HandlerState.NONE
         self.handler = None
 
@@ -292,9 +292,9 @@ class BreezeModuleManager:
                 )
 
         with open(self.breeze_installation_path / "config.yaml", "r") as f:
-            config = yaml.safe_load(f)
+            breeze_config = yaml.safe_load(f)
 
-        self._config = config
+        self._breeze_config = breeze_config
 
         try:  # write handlers
             resource_files = (
@@ -315,7 +315,8 @@ class BreezeModuleManager:
                 f.write(default_handler_content)
         except Exception as e:
             self.logger.error(f"[BreezeModuleManager] Failed to install handlers: {e}")
-
+            self.plugin.set_load_failed()
+            
     def _find_extensions(self):
         if self.is_breeze_installed and self.breeze_installation_path is not None:
             extensions_path = self.breeze_installation_path / "extensions"
@@ -332,7 +333,7 @@ class BreezeModuleManager:
             )
             self.extension_files = extension_files
 
-            handler_from_config = self._config.get("handler")
+            handler_from_config = self._breeze_config.get("handler")
             if handler_from_config:
                 handler_path = extensions_path / "handlers" / handler_from_config
                 if handler_path.is_file():
@@ -402,9 +403,8 @@ class BreezeModuleManager:
 
         ext_path = self.breeze_installation_path / "extensions" / extension_filename
         if not ext_path.is_file():
-            self.logger.error(
-                f"[BreezeModuleManager] Extension file not found: {ext_path}"
-            )
+            self.logger.error(f"[BreezeModuleManager] Extension file not found: {ext_path}")
+            self.plugin.set_load_failed()
             return
 
         module_name = extension_filename.removesuffix(".py")
@@ -414,9 +414,8 @@ class BreezeModuleManager:
             spec = importlib.util.spec_from_file_location(module_name, str(ext_path))
 
             if spec is None or spec.loader is None:
-                self.logger.error(
-                    f"[BreezeModuleManager] Failed to create spec for {module_name}"
-                )
+                self.logger.error(f"[BreezeModuleManager] Failed to create spec for {module_name}")
+                self.plugin.set_load_failed()
                 return
 
             module = importlib.util.module_from_spec(spec)
@@ -434,18 +433,16 @@ class BreezeModuleManager:
                         f"[BreezeModuleManager] Extension {module_name} initialized via on_load()"
                     )
                 except Exception as e:
-                    self.logger.error(
-                        f"[BreezeModuleManager] Error in on_load() of {module_name}: {e}"
-                    )
+                    self.logger.error(f"BreezeModuleManager: Error in on_load() of {module_name}: {e}")
+                    self.plugin.set_load_failed()
             else:
                 self.logger.warning(
                     f"[BreezeModuleManager] Extension {module_name} has no on_load() function."
                 )
 
         except Exception as e:
-            self.logger.error(
-                f"[BreezeModuleManager] Failed to load extension {extension_filename}: {e}"
-            )
+            self.logger.error(f"BreezeModuleManager: Failed to load extension {extension_filename}: {e}")
+            self.plugin.set_load_failed()
 
     def start(self, path):
         self._install_breeze(path)
@@ -454,9 +451,8 @@ class BreezeModuleManager:
         if self.is_breeze_installed:
             self._find_extensions()
         else:
-            self.logger.error(
-                "[BreezeModuleManager] Features like extensions will NOT be loaded because Breeze is not installed."
-            )
+            self.logger.error("[BreezeModuleManager] Features like extensions will NOT be loaded because Breeze is not installed.")
+            self.plugin.set_load_failed()
 
         # Handler
         if self.handler_state == self.HandlerState.NONE:
@@ -589,12 +585,7 @@ class Breeze(Plugin):  # PLUGIN
         current_directory = os.getcwd()
         self.server.logger.info(f"{current_directory}, {__file__}")
 
-        self.bmm = BreezeModuleManager(logger=self.logger, pdm=self.pdm, btp=self.btp)
-        self.bmm.start(self.installation_path)
-        self.bea = BreezeExtensionAPI(
-            self.logger, pdm=self.pdm, btp=self.btp, bmm=self.bmm, plugin=self
-        )
-        self.bea._load_extensions()
+        self._has_load_failed = False
 
         with open(self.installation_path / "config.yaml", "r") as f:
             config = yaml.safe_load(f)
@@ -606,16 +597,23 @@ class Breeze(Plugin):  # PLUGIN
 
         self.breeze_config = config
 
-        self.chat_disabled = False
+        self.bmm = BreezeModuleManager(logger=self.logger, pdm=self.pdm, btp=self.btp, plugin=self); self.bmm.start(self.installation_path)
+        self.bea = BreezeExtensionAPI(self.logger, pdm=self.pdm, btp=self.btp, bmm=self.bmm, plugin=self); self.bea._load_extensions()
 
     def __init__(self):
         super().__init__()
         self.pdm = PlayerDataManager()
         self.btp = BreezeTextProcessing()
 
-    def handle(
-        self, handler_input: BreezeExtensionAPI.HandlerInput
-    ) -> BreezeExtensionAPI.HandlerOutput:
+    def set_load_failed(self):
+        """Call method to tell Breeze that plugin load has failed"""
+        self.logger.error("Extension load failed!")
+        self._has_load_failed = True
+        if self.breeze_config.get("disable_chat_on_extension_load_error", False):
+            self.server.broadcast_message(f"{ColorFormat.RED}Chat is temporarily disabled for technical reasons")
+            self.logger.error("Since certain handlers, extensions may not work, and disable_chat_on_extension_load_error is set to true in the config, chat is now disabled")
+
+    def handle(self, handler_input: BreezeExtensionAPI.HandlerInput) -> BreezeExtensionAPI.HandlerOutput:
         raw = None
         try:
             if self.bmm.handler is None:
@@ -665,8 +663,12 @@ class Breeze(Plugin):  # PLUGIN
     def on_private_message(self, event: PlayerCommandEvent):
         if self.breeze_config.get("use_message_handling", True) is not True:
             return
-        parts = event.command.split(" ", 2)
-        if parts[0] in ["/msg", "/tell", "/whisper", "/w"]:
+        parts = event.command.split(' ', 2)
+        if parts[0] in ['/msg', '/tell', '/whisper', '/w']:
+            if self._has_load_failed and self.breeze_config.get("disable_chat_on_extension_load_error", False):
+                event.player.send_message(f"{ColorFormat.RED}Chat is temporarily disabled for technical reasons")
+                event.cancel()
+                return
             # ["/msg", "recipient", "message"]
             if len(parts) < 2:
                 return  # command would have errored anyways
@@ -700,18 +702,18 @@ class Breeze(Plugin):  # PLUGIN
         pdata = self.pdm.get_player_data(event.player.name)
         pdata["latest_time_a_message_was_sent"] = time.monotonic() - 10
         pdata["last_message"] = ""
-
-    @event_handler(priority=EventPriority.LOWEST)
+        if self._has_load_failed and self.breeze_config.get("disable_chat_on_extension_load_error", False):
+            event.player.send_message(f"{ColorFormat.RED}Chat is temporarily disabled for technical reasons")
+      
+    @event_handler(priority=EventPriority.HIGHEST) #type: ignore
     def on_chat_sent_by_player(self, event: PlayerChatEvent):
         if self.breeze_config.get("use_message_handling", True) is not True:
             return
         event.cancel()
-
-        if self.chat_disabled:
-            event.player.send_message(
-                f"{ColorFormat.RED}Chat is temporarily disabled for technical reasons"
-            )
+        if self._has_load_failed and self.breeze_config.get("disable_chat_on_extension_load_error", False):
+            event.player.send_message(f"{ColorFormat.RED}Chat is temporarily disabled for technical reasons")
             return
+        
         self.bea.eventbus._emit("on_breeze_chat_event", event, self)
 
         h_input: BreezeExtensionAPI.HandlerInput = {

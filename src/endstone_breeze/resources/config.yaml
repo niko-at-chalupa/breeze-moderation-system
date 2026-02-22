@@ -6,7 +6,6 @@ use_message_handling: true
 
 # Whether to disable chat functionality if an extension fails to load. This is great for security
 disable_chat_on_extension_load_error: false
-# NOTE: DOES NOT WORK YET
 
 # Whether to disable chat functionality if the message handler raises an error. By default, Breeze will fall back to its internal default handler if a custom handler fails.
 fully_cancel_message_on_handler_error: false
