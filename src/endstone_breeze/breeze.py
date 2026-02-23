@@ -585,20 +585,19 @@ class Breeze(Plugin):  # PLUGIN
         current_directory = os.getcwd()
         self.server.logger.info(f"{current_directory}, {__file__}")
 
+        self.bmm = BreezeModuleManager(logger=self.logger, pdm=self.pdm, btp=self.btp, plugin=self); self.bmm.start(self.installation_path)
+        self.bea = BreezeExtensionAPI(self.logger, pdm=self.pdm, btp=self.btp, bmm=self.bmm, plugin=self); self.bea._load_extensions() 
+
         self._has_load_failed = False
 
         with open(self.installation_path / "config.yaml", "r") as f:
             config = yaml.safe_load(f)
+        self.breeze_config = config
 
         if config.get("use_message_handling", True) is not True:
             self.logger.info(
                 "Automatic message handling is disabled, Breeze will not modify or process messages."
-            )
-
-        self.breeze_config = config
-
-        self.bmm = BreezeModuleManager(logger=self.logger, pdm=self.pdm, btp=self.btp, plugin=self); self.bmm.start(self.installation_path)
-        self.bea = BreezeExtensionAPI(self.logger, pdm=self.pdm, btp=self.btp, bmm=self.bmm, plugin=self); self.bea._load_extensions()
+            )        
 
     def __init__(self):
         super().__init__()
