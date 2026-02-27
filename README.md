@@ -169,7 +169,7 @@ Soon!
 > You can use extensions to:
 > - Log moderator actions
 > - Log potentially harmful messages
-> - Evaluate user's past messagesto see if a user should be moderated (e.g., to mute a player for their past messages, after careful review)
+> - Evaluate user's past messages to see if a user should be moderated (e.g., to mute a player for their past messages, after careful review)
 >
 > <details><summary>Basic example extension</summary>
 >
