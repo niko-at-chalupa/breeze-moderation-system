@@ -441,7 +441,7 @@ class BreezeModuleManager:
                 )
 
         except Exception as e:
-            self.logger.error(f"BreezeModuleManager: Failed to load extension {extension_filename}: {e}")
+            self.logger.error(f"[BreezeModuleManager] Failed to load extension {extension_filename}: {e}")
             self.plugin.set_load_failed()
 
     def start(self, path):
